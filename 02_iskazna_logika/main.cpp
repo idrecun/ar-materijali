@@ -1,244 +1,267 @@
 #include <iostream>
-#include <memory>
 #include <variant>
+#include <memory>
 #include <map>
 #include <set>
-#include <optional>
 
-using Valuation = std::map<std::string, bool>;
-using AtomSet = std::set<std::string>;
-
-struct False; struct True; struct Atom; struct Not; struct Binary;
+// Structures for defining a Formula
+struct False;
+struct True;
+struct Atom;
+struct Not;
+struct Binary;
 
 using Formula = std::variant<False, True, Atom, Not, Binary>;
 using FormulaPtr = std::shared_ptr<Formula>;
 
-struct False  { };
-struct True   { };
-struct Atom   { std::string name; };
-struct Not    { FormulaPtr sub; };
+struct False {};
+struct True {};
+struct Atom { std::string name; };
+struct Not { FormulaPtr subformula; };
 struct Binary {
-    enum Type {
-        And, Or, Imp, Eq
-    } type;
-
-    FormulaPtr l, r;
+    enum Type { And, Or, Impl, Eq } type;
+    FormulaPtr left, right;
 };
 
-// Helper functions
-
-FormulaPtr ptr(Formula f) { return std::make_shared<Formula>(f); }
+FormulaPtr ptr(const Formula& f) { return std::make_shared<Formula>(f); }
 
 template<typename T>
-bool is(FormulaPtr f) { return std::holds_alternative<T>(*f); }
+bool is(const FormulaPtr& f) { return std::holds_alternative<T>(*f);}
 
 template<typename T>
-T as(FormulaPtr f) { return std::get<T>(*f); }
+T as(const FormulaPtr& f) { return std::get<T>(*f); }
 
-template<typename R, typename F, typename T, typename A, typename N, typename B, typename... Args>
-R match(F visitF, T visitT, A visitA, N visitN, B visitB, FormulaPtr f, Args&&... args) {
-    if(std::holds_alternative<False>(*f))
-        return visitF(std::forward<Args>(args)...);
-    if(std::holds_alternative<True>(*f))
-        return visitT(std::forward<Args>(args)...);
-    if(std::holds_alternative<Atom>(*f))
-        return visitA(std::get<Atom>(*f), std::forward<Args>(args)...);
-    if(std::holds_alternative<Not>(*f))
-        return visitN(std::get<Not>(*f), std::forward<Args>(args)...);
-    if(std::holds_alternative<Binary>(*f))
-        return visitB(std::get<Binary>(*f), std::forward<Args>(args)...);
-    return R();
+// Valuation
+using Valuation = std::map<std::string, bool>;
+
+// AtomSet
+using AtomSet = std::set<std::string>;
+
+int complexity(const FormulaPtr& f) {
+    if(is<False>(f) || is<True>(f) || is<Atom>(f))
+        return 0;
+    if(is<Not>(f))
+        return 1 + complexity(as<Not>(f).subformula);
+    if(is<Binary>(f))
+        return 1 + complexity(as<Binary>(f).left) + complexity(as<Binary>(f).right);
+    return 0;
 }
 
-template<typename R, typename A, typename O, typename I, typename E, typename... Args>
-R match(A visitA, O visitO, I visitI, E visitE, Binary b, Args&&... args) {
-    switch(b.type) {
-        case Binary::And: return visitA(b.l, b.r, std::forward<Args>(args)...);
-        case Binary::Or:  return visitO(b.l, b.r, std::forward<Args>(args)...);
-        case Binary::Imp: return visitI(b.l, b.r, std::forward<Args>(args)...);
-        case Binary::Eq:  return visitE(b.l, b.r, std::forward<Args>(args)...);
-    }
-    return R();
-}
-
-std::string sign(Binary::Type type) {
-    switch(type) {
-        case Binary::And: return " & ";
-        case Binary::Or:  return " | ";
-        case Binary::Imp: return " -> ";
-        case Binary::Eq:  return " <-> ";
+std::string print(const FormulaPtr& f) {
+    if(is<False>(f)) return "F";
+    if(is<True>(f))  return "T";
+    if(is<Atom>(f))  return as<Atom>(f).name;
+    if(is<Not>(f))   return "~" + print(as<Not>(f).subformula);
+    if(is<Binary>(f)) {
+        std::string sign;
+        switch(as<Binary>(f).type) {
+            case Binary::And:  sign = "&";   break;
+            case Binary::Or:   sign = "|";   break;
+            case Binary::Impl: sign = "->";  break;
+            case Binary::Eq:   sign = "<->"; break;
+        }
+        return "(" + print(as<Binary>(f).left) + " " + sign + " " + print(as<Binary>(f).right) + ")";
     }
     return "";
 }
-void print(FormulaPtr);
-void printF() { std::cout << "F"; }
-void printT() { std::cout << "T"; }
-void printA(Atom a) { std::cout << a.name; }
-void printN(Not n) { std::cout << "~"; print(n.sub); }
-void printB(Binary b) { 
-    std::cout << "(";
-    print(b.l);
-    std::cout << sign(b.type);
-    print(b.r);
-    std::cout << ")";
-}
-void print(FormulaPtr f) {
-    match<void>(printF, printT, printA, printN, printB, f);
-}
 
-unsigned complexity(FormulaPtr);
-unsigned complexityF() { return 0; }
-unsigned complexityT() { return 0; }
-unsigned complexityA(Atom) { return 0; }
-unsigned complexityN(Not n) { return 1 + complexity(n.sub); }
-unsigned complexityB(Binary b) { return 1 + complexity(b.l) + complexity(b.r); }
-unsigned complexity(FormulaPtr f) {
-    return match<unsigned>(complexityF, complexityT, complexityA, complexityN, complexityB, f);
-}
-
-bool eval(FormulaPtr, Valuation&);
-bool evalF(Valuation&) { return false; }
-bool evalT(Valuation&) { return true; }
-bool evalA(Atom a, Valuation& v) { return v[a.name]; }
-bool evalN(Not n, Valuation& v) { return !eval(n.sub, v); }
-bool evalAnd(FormulaPtr l, FormulaPtr r, Valuation& v) { return eval(l, v) && eval(r, v); }
-bool evalOr(FormulaPtr l, FormulaPtr r, Valuation& v) { return eval(l, v) || eval(r, v); }
-bool evalImp(FormulaPtr l, FormulaPtr r, Valuation& v) { return !eval(l, v) || eval(r, v); }
-bool evalEq(FormulaPtr l, FormulaPtr r, Valuation& v) { return eval(l, v) == eval(r, v); }
-bool evalB(Binary b, Valuation& v) {
-    return match<bool>(evalAnd, evalOr, evalImp, evalEq,
-                       b, v);
-}
-bool eval(FormulaPtr f, Valuation& v) {
-    return match<bool>(evalF, evalT, evalA, evalN, evalB,
-                       f, v);
-}
-
-bool equal(FormulaPtr f, FormulaPtr g);
-bool equalF(FormulaPtr g) { return is<False>(g); };
-bool equalT(FormulaPtr g) { return is<True>(g);  };
-bool equalA(Atom a, FormulaPtr g) { return is<Atom>(g) && a.name == as<Atom>(g).name; }
-bool equalN(Not n, FormulaPtr g) { return is<Not>(g) && equal(n.sub, as<Not>(g).sub); }
-bool equalB(Binary b, FormulaPtr g) {
-    if(!is<Binary>(g))
+bool evaluate(const FormulaPtr& f, Valuation& v) {
+    if(is<False>(f))
         return false;
-    Binary gb = as<Binary>(g);
-    return b.type == gb.type && equal(b.l, gb.l) && equal(b.r, gb.r);
-}
-bool equal(FormulaPtr f, FormulaPtr g) {
-    return match<bool>(equalF, equalT, equalA, equalN, equalB, f, g);
+    if(is<True>(f))
+        return true;
+    if(is<Atom>(f))
+        return v[as<Atom>(f).name];
+    if(is<Not>(f))
+        return !evaluate(as<Not>(f).subformula, v);
+    if(is<Binary>(f)) {
+        bool evalL = evaluate(as<Binary>(f).left, v);
+        bool evalR = evaluate(as<Binary>(f).right, v);
+        switch(as<Binary>(f).type) {
+            case Binary::And:  return evalL && evalR;
+            case Binary::Or:   return evalL || evalR;
+            case Binary::Impl: return !evalL || evalR;
+            case Binary::Eq:   return evalL == evalR;
+        }
+    }
+    return false;
 }
 
-// f    = (p & q) -> ~r
-// what = ~r
-// with = r | p
-// res  = (p & q) -> (r | p)
-FormulaPtr substitute(FormulaPtr f, FormulaPtr what, FormulaPtr with);
-FormulaPtr substituteF(FormulaPtr what, FormulaPtr with) { return ptr(False{}); }
-FormulaPtr substituteT(FormulaPtr what, FormulaPtr with) { return ptr(True{}); }
-FormulaPtr substituteA(Atom a, FormulaPtr what, FormulaPtr with) { return ptr(a); }
-FormulaPtr substituteN(Not n, FormulaPtr what, FormulaPtr with) { return ptr(Not{ substitute(n.sub, what, with) }); }
-FormulaPtr substituteB(Binary b, FormulaPtr what, FormulaPtr with) {
-    return ptr(Binary{
-                   b.type,
-                   substitute(b.l, what, with),
-                   substitute(b.r, what, with)
-               });
+bool equal(const FormulaPtr& f, const FormulaPtr& g) {
+    if(f->index() != g->index())
+        return false;
+
+    if(is<False>(f) || is<True>(f))
+        return true;
+    if(is<Atom>(f))
+        return as<Atom>(f).name == as<Atom>(g).name;
+    if(is<Not>(f))
+        return equal(as<Not>(f).subformula, as<Not>(g).subformula);
+    if(is<Binary>(f)) {
+        return as<Binary>(f).type == as<Binary>(g).type &&
+               equal(as<Binary>(f).left, as<Binary>(g).left) &&
+               equal(as<Binary>(f).right, as<Binary>(g).right);
+    }
+    return false;
 }
-FormulaPtr substitute(FormulaPtr f, FormulaPtr what, FormulaPtr with) {
+
+// Drugi cas
+
+FormulaPtr substitute(const FormulaPtr& f, const FormulaPtr& what, const FormulaPtr& with) {
     if(equal(f, what))
         return with;
-    return match<FormulaPtr>(substituteF, substituteT, substituteA, substituteN, substituteB, f, what, with);
+    if(is<False>(f) || is<True>(f) || is<Atom>(f))
+        return f;
+    if(is<Not>(f))
+        return ptr(Not{substitute(as<Not>(f).subformula, what, with)});
+    if(is<Binary>(f)) {
+        auto binaryF = as<Binary>(f);
+        return ptr(Binary{
+            binaryF.type,
+            substitute(binaryF.left, what, with),
+            substitute(binaryF.right, what, with)
+        });
+    }
+    return FormulaPtr{};
 }
 
-void getAtoms(FormulaPtr f, AtomSet& atoms);
-void getAtomsF(AtomSet&) {}
-void getAtomsT(AtomSet&) {}
-void getAtomsA(Atom a, AtomSet& atoms) { atoms.insert(a.name); }
-void getAtomsN(Not n, AtomSet& atoms) { getAtoms(n.sub, atoms); }
-void getAtomsB(Binary b, AtomSet& atoms) { getAtoms(b.l, atoms); getAtoms(b.r, atoms); }
-void getAtoms(FormulaPtr f, AtomSet& atoms) {
-    match<void>(getAtomsF, getAtomsT, getAtomsA, getAtomsN, getAtomsB, f, atoms);
+void getAtoms(const FormulaPtr& f, AtomSet& atoms) {
+    if(is<Atom>(f))
+        atoms.insert(as<Atom>(f).name);
+    else if(is<Not>(f))
+        getAtoms(as<Not>(f).subformula, atoms);
+    else if(is<Binary>(f)) {
+        getAtoms(as<Binary>(f).left, atoms);
+        getAtoms(as<Binary>(f).right, atoms);
+    }
 }
 
-void print(Valuation& val) {
-    for(auto& [atom, v] : val)
-        std::cout << v << ' ';
-}
-
-bool next(Valuation& val) {
-    auto it = begin(val);
-    while(it != end(val) && it->second) {
+bool next(Valuation& v) {
+    auto it = begin(v);
+    while(it != end(v) && it->second) {
         it->second = false;
         it++;
     }
 
-    if(it == end(val))
+    if(it == end(v))
         return false;
 
     return it->second = true;
 }
 
-void table(FormulaPtr f) {
+void print(Valuation& v) {
+    for(const auto& [atom, value] : v)
+        std::cout << value << ' ';
+}
+
+void table(const FormulaPtr& f) {
     AtomSet atoms;
     getAtoms(f, atoms);
 
-    Valuation val;
-    for(auto atom : atoms) {
-        val[atom] = false;
+    Valuation v;
+    for(const std::string& atom : atoms) {
+        v[atom] = false;
         std::cout << atom << ' ';
     }
     std::cout << std::endl;
 
     do {
-        print(val);
-        std::cout << "| ";
-        std::cout << eval(f, val) << std::endl;
-    } while(next(val));
+        print(v);
+        std::cout << "| " << evaluate(f, v) << std::endl;
+    } while(next(v));
 }
 
-std::optional<Valuation> isSatisfiable(FormulaPtr f) {
+std::optional<Valuation> isSatisfiable(const FormulaPtr& f) {
     AtomSet atoms;
     getAtoms(f, atoms);
 
-    Valuation val;
-    for(auto atom : atoms)
-        val[atom] = false;
+    Valuation v;
+    for(const auto& atom : atoms)
+        v[atom] = false;
 
     do {
-        if(eval(f, val))
-            return val;
-    } while(next(val));
+        if(evaluate(f, v))
+            return v;
+    } while(next(v));
     return {};
+}
+
+FormulaPtr simplify(const FormulaPtr& f) {
+    if(is<False>(f) || is<True>(f) || is<Atom>(f))
+        return f;
+    if(is<Not>(f)) {
+        FormulaPtr s = simplify(as<Not>(f).subformula);
+        if(is<True>(s))
+            return ptr(False{});
+        if(is<False>(s))
+            return ptr(True{});
+        return ptr(Not{s});
+    }
+    auto b = as<Binary>(f);
+    FormulaPtr ls = simplify(b.left);
+    FormulaPtr rs = simplify(b.right);
+    if(b.type == Binary::And) {
+        if(is<False>(ls) || is<False>(rs))
+            return ptr(False{});
+        if(is<True>(ls))
+            return rs;
+        if(is<True>(rs))
+            return ls;
+        return ptr(Binary{Binary::And, ls, rs});
+    }
+    if(b.type == Binary::Or) {
+
+    }
+    if(b.type == Binary::Impl) {
+
+    }
+    if(b.type == Binary::Eq) {
+
+    }
 }
 
 int main() {
     FormulaPtr p = ptr(Atom{"p"});
     FormulaPtr q = ptr(Atom{"q"});
-    FormulaPtr r = ptr(Atom{"r"});
-    FormulaPtr ls = ptr(Binary{Binary::And, p, q});
-    FormulaPtr rs = ptr(Not{r});
-    FormulaPtr f = ptr(Binary{Binary::Imp, ls, rs});
+    FormulaPtr pAndq = ptr(Binary{Binary::And, p, q});
+    std::cout << complexity(pAndq) << std::endl;
+    std::cout << print(pAndq) << std::endl;
 
-    print(f);
-    std::cout << std::endl;
+    Valuation v = {{"p", true}, {"q", false}};
+    std::cout << (evaluate(pAndq, v) ? "True" : "False") << std::endl;
 
-    std::cout << complexity(f) << std::endl;
+    table(pAndq);
 
-    FormulaPtr r_or_p = ptr(Binary{Binary::Or, r, p});
-    print(substitute(f, rs, r_or_p));
-    std::cout << std::endl;
-
-    table(f);
-
-    auto val = isSatisfiable(ptr(Not{f}));
-    if(val) {
-        std::cout << "SAT : ";
-        print(val.value());
+    auto satV = isSatisfiable(pAndq);
+    if(satV) {
+        std::cout << "SAT for valuation: ";
+        print(satV.value());
         std::cout << std::endl;
     }
     else
-        std::cout << "UNSAT";
+        std::cout << "UNSAT" << std::endl;
+
+    FormulaPtr unsat = ptr(False{});
+    auto unsatV = isSatisfiable(unsat);
+    if(unsatV) {
+        std::cout << "SAT for valuation: ";
+        print(unsatV.value());
+        std::cout << std::endl;
+    }
+    else
+        std::cout << "UNSAT" << std::endl;
 
     return 0;
 }
+
+
+
+
+
+
+
+
+
+
+
+
