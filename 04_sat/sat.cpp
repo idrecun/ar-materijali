@@ -2,6 +2,7 @@
 #include <vector>
 #include <map>
 #include <optional>
+#include <fstream>
 
 using Atom = int;
 using Literal = int;
@@ -10,28 +11,15 @@ using NormalForm = std::vector<Clause>;
 
 struct PartialValuation {
     int atomCount;
-    std::map<Atom, bool> value;
     std::vector<Literal> stack;
-
-    void print() {
-        for(auto x : stack)
-            std::cout << x << ' ';
-        std::cout << std::endl;
-    }
-
-    void push(Literal l, bool decide) {
-        if(decide)
-            stack.push_back(0);
-        stack.push_back(l);
-        value[std::abs(l)] = l > 0;
-    }
+    std::map<Atom, bool> value;
 
     Literal backtrack() {
         Literal last = 0;
         while(!stack.empty() && stack.back() != 0) {
             last = stack.back();
-            stack.pop_back();
             value.erase(std::abs(last));
+            stack.pop_back();
         }
 
         if(stack.empty())
@@ -41,52 +29,69 @@ struct PartialValuation {
         return last;
     }
 
+    void push(Literal l, bool decide) {
+        if(decide)
+            stack.push_back(0);
+        stack.push_back(l);
+        value[std::abs(l)] = l > 0;
+    }
+
     bool isConflict(const Clause& clause) {
-        for(Literal l : clause) {
-            Atom atom = std::abs(l);
-            if(value.find(atom) == end(value))
+        for(const auto& literal : clause) {
+            Atom atom = std::abs(literal);
+            if(value.find(atom) == value.end())
                 return false;
-            if(value[atom] == (l > 0))
+            if(value[atom] == (literal > 0))
                 return false;
         }
         return true;
     }
 
     bool hasConflict(const NormalForm& cnf) {
-        for(const Clause& c : cnf)
-            if(isConflict(c))
+        for(const auto& clause : cnf)
+            if(isConflict(clause))
                 return true;
         return false;
     }
 
     Literal isUnitClause(const Clause& clause) {
         Literal unit = 0;
-        for(Literal l : clause) {
-            Atom atom = std::abs(l);
-            if(value.find(atom) == end(value)) {
+        for(const auto& literal : clause) {
+            Atom atom = std::abs(literal);
+            if(value.find(atom) == value.end()) {
                 if(unit != 0)
                     return 0;
-                unit = l;
+                unit = literal;
             }
-            else if(value[atom] == (l > 0))
+            else if(value[atom] == (literal > 0))
                 return 0;
         }
         return unit;
     }
 
-    Literal hasUnitLiteral(const NormalForm& cnf) {
-        Literal l = 0;
-        for(const Clause& c : cnf)
-            if((l = isUnitClause(c)) != 0)
-                return l;
-        return l;
+    Literal unitClause(const NormalForm& cnf) {
+        Literal literal;
+        for(const auto& clause : cnf) {
+            if((literal = isUnitClause(clause)) != 0)
+                return literal;
+        }
+        return 0;
     }
 
     Literal nextLiteral() {
-        for(int atom = 1; atom < atomCount; atom++)
+        for(int atom = 1; atom <= atomCount; atom++)
             if(value.find(atom) == end(value))
                 return atom;
         return 0;
+    }
+
+    void print() {
+        for(int i = 0; i < stack.size(); i++)
+            if(stack[i] == 0)
+                std::cout << "| ";
+            else
+                std::cout << stack[i] << ' ';
+        std::cout << std::endl;
     }
 };
 
@@ -97,64 +102,61 @@ std::optional<PartialValuation> solve(NormalForm& cnf, int atomCount) {
     Literal l;
     while(true) {
         valuation.print();
-
         if(valuation.hasConflict(cnf)) {
             l = valuation.backtrack();
             if(l == 0)
                 break;
             valuation.push(-l, false);
-        }
-        else if((l = valuation.hasUnitLiteral(cnf)) != 0)
+        } else if((l = valuation.unitClause(cnf)) != 0) {
             valuation.push(l, false);
-        else if((l = valuation.nextLiteral()) != 0)
+        } else if((l = valuation.nextLiteral()) != 0) {
             valuation.push(l, true);
-        else
+        } else {
             return valuation;
+        }
     }
     return {};
 }
 
-NormalForm parse(std::istream& fin, int& atomCount) {
+NormalForm parse(std::istream& input, int& atomCount) {
     std::string buffer;
     do {
-        fin >> buffer;
+        input >> buffer;
         if(buffer == "c")
-            fin.ignore(10000, '\n');
+            input.ignore(1000, '\n');
     } while(buffer != "p");
-
     // procitaj "cnf"
-    fin >> buffer;
+    input >> buffer;
 
     int clauseCount;
-    fin >> atomCount >> clauseCount;
+    input >> atomCount >> clauseCount;
 
-    NormalForm formula;
+    NormalForm res;
     for(int i = 0; i < clauseCount; i++) {
-        Clause c;
-
-        Literal l;
-        fin >> l;
-        while(l != 0) {
-            c.push_back(l);
-            fin >> l;
+        Clause clause;
+        Literal literal;
+        input >> literal;
+        while(literal != 0) {
+            clause.push_back(literal);
+            input >> literal;
         }
-
-        formula.push_back(c);
+        res.push_back(clause);
     }
-
-    return formula;
+    return res;
 }
 
 int main() {
-    int atomCount = 0;
-    NormalForm formula = parse(std::cin, atomCount);
+    std::string filename = "/Users/idrecun/matf/ar/sat/formula.cnf";
+    std::ifstream inputFile(filename);
 
+    int atomCount;
+    auto formula = parse(inputFile, atomCount);
     auto valuation = solve(formula, atomCount);
-    if(valuation)
+    if(valuation.has_value()) {
         std::cout << "SAT" << std::endl;
-    else
+        valuation.value().print();
+    } else {
         std::cout << "UNSAT" << std::endl;
-
+    }
     return 0;
 }
-
