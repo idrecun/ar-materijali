@@ -1,6 +1,8 @@
 #include <iostream>
 #include <variant>
+#include <optional>
 #include <memory>
+#include <vector>
 #include <map>
 #include <set>
 

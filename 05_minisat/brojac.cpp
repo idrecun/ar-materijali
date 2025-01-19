@@ -1,4 +1,5 @@
 #include <iostream>
+#include <vector>
 #include <map>
 
 using Clause = std::vector<int>;
